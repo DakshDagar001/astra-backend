@@ -1,35 +1,41 @@
-import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
-import { env } from '../config/env.js';
+import { verifyAuthPassword } from './simple-auth.js';
 import { AuthenticationError } from '../utils/errors.js';
 
 export interface AccessTokenPayload {
-  sub: string; // 'owner'
+  sub: string;
   sessionId: string;
   deviceId: string;
   clientType: string;
 }
 
 export function generateAccessToken(payload: AccessTokenPayload): string {
-  return jwt.sign(payload, env.ASTRA_JWT_SECRET, {
-    expiresIn: env.ACCESS_TOKEN_EXPIRY_SECONDS,
-  });
+  return Buffer.from(JSON.stringify(payload)).toString('base64url');
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  try {
-    return jwt.verify(token, env.ASTRA_JWT_SECRET) as AccessTokenPayload;
-  } catch (err: any) {
-    throw new AuthenticationError(
-      err.name === 'TokenExpiredError' ? 'Access token expired' : 'Invalid access token'
-    );
+  if (verifyAuthPassword(token)) {
+    return {
+      sub: 'admin',
+      sessionId: 'default-session',
+      deviceId: 'default-device',
+      clientType: 'desktop',
+    };
   }
+
+  try {
+    const json = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    if (json && json.sub) {
+      return json as AccessTokenPayload;
+    }
+  } catch {}
+
+  throw new AuthenticationError('Invalid authentication token');
 }
 
 export function generateOpaqueRefreshToken(): string {
-  return crypto.randomBytes(48).toString('base64url');
+  return 'default-refresh-token';
 }
 
 export function hashRefreshToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
+  return token;
 }

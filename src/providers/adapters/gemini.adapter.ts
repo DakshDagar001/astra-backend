@@ -14,7 +14,7 @@ export class GeminiAdapter extends BaseProviderAdapter {
   readonly id = 'gemini';
   readonly displayName = 'Google Gemini';
   readonly description = 'High-speed multimodal intelligence with large context windows';
-  readonly baseUrl = 'https://generativelanguage.googleapis.com';
+  readonly baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
   readonly defaultModel = 'gemini:gemini-2.5-flash';
   protected readonly apiKeyEnvVar = 'GEMINI_API_KEY';
 
@@ -67,7 +67,7 @@ export class GeminiAdapter extends BaseProviderAdapter {
       };
     }
 
-    const url = `${this.baseUrl}/v1beta/models/${request.modelIdentifier}:generateContent?key=${apiKey}`;
+    const url = `${this.baseUrl}/models/${request.modelIdentifier}:generateContent?key=${apiKey}`;
 
     const res = await this.fetchWithTimeout(
       url,
@@ -143,7 +143,7 @@ export class GeminiAdapter extends BaseProviderAdapter {
       };
     }
 
-    const url = `${this.baseUrl}/v1beta/models/${request.modelIdentifier}:streamGenerateContent?alt=sse&key=${apiKey}`;
+    const url = `${this.baseUrl}/models/${request.modelIdentifier}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
     const res = await this.fetchWithTimeout(
       url,

@@ -16,8 +16,7 @@ describe('Astra AI Backend API Endpoints', () => {
   beforeEach(async () => {
     sessionRepository.clearMemoryForTesting();
     resetRateLimitsForTesting();
-    const hash = await hashPassword(testPassword);
-    (env as any).ASTRA_PASSWORD_HASH = hash;
+    (env as any).AUTH_PASSWORD = testPassword;
     (env as any).OPENAI_API_KEY = 'mock-openai-key';
 
     // Login to get tokens

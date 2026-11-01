@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { hashPassword } from '../src/auth/password.js';
-import { sessionService } from '../src/auth/session-service.js';
-import { sessionRepository } from '../src/database/repositories/session.repository.js';
+import request from 'supertest';
+import { createApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
+import { verifyAuthPassword } from '../src/auth/simple-auth.js';
+import { sessionService } from '../src/auth/session-service.js';
+import { resetRateLimitsForTesting } from '../src/middleware/rate-limit.middleware.js';
 
-describe('Backend Authentication System', () => {
+describe('Simplified Single-User Authentication System (AUTH_PASSWORD)', () => {
+  const app = createApp();
   const testPassword = 'SuperSecretAstraPassword123!';
   const testDevice = {
     deviceId: 'win-dev-test-1',
@@ -14,78 +17,70 @@ describe('Backend Authentication System', () => {
     ipAddress: '127.0.0.1',
   };
 
-  beforeEach(async () => {
-    sessionRepository.clearMemoryForTesting();
-    // Configure hashed password in environment
-    const hash = await hashPassword(testPassword);
-    (env as any).ASTRA_PASSWORD_HASH = hash;
+  beforeEach(() => {
+    resetRateLimitsForTesting();
+    (env as any).AUTH_PASSWORD = testPassword;
   });
 
-  it('authenticates with valid password and creates session', async () => {
+  it('verifies valid password using constant-time comparison', () => {
+    expect(verifyAuthPassword(testPassword)).toBe(true);
+  });
+
+  it('rejects invalid password, empty string, or undefined', () => {
+    expect(verifyAuthPassword('wrong-password')).toBe(false);
+    expect(verifyAuthPassword('')).toBe(false);
+    expect(verifyAuthPassword(undefined)).toBe(false);
+  });
+
+  it('authenticates with valid password and returns session tokens via service', async () => {
     const result = await sessionService.login(testPassword, testDevice);
     expect(result).toBeDefined();
-    expect(result.accessToken).toBeTruthy();
-    expect(result.refreshToken).toBeTruthy();
+    expect(result.accessToken).toBe(testPassword);
+    expect(result.refreshToken).toBe(testPassword);
     expect(result.sessionId).toBeTruthy();
     expect(result.deviceId).toBe(testDevice.deviceId);
   });
 
-  it('rejects invalid password with generic error message', async () => {
+  it('rejects invalid password with generic error message via service', async () => {
     await expect(sessionService.login('wrong_password', testDevice)).rejects.toThrow(
       'Invalid credentials'
     );
   });
 
-  it('rotates refresh token on valid refresh request', async () => {
-    const loginResult = await sessionService.login(testPassword, testDevice);
-    const refreshResult = await sessionService.refresh(loginResult.refreshToken, testDevice);
+  it('allows access via X-Astra-Password header on protected endpoints', async () => {
+    const res = await request(app)
+      .get('/api/v1/models')
+      .set('X-Astra-Password', testPassword);
 
-    expect(refreshResult.accessToken).toBeTruthy();
-    expect(refreshResult.refreshToken).toBeTruthy();
-    expect(refreshResult.refreshToken).not.toBe(loginResult.refreshToken);
-    expect(refreshResult.sessionId).toBe(loginResult.sessionId);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
   });
 
-  it('detects refresh token reuse and revokes entire session family', async () => {
-    const loginResult = await sessionService.login(testPassword, testDevice);
-    
-    // First refresh succeeds and rotates the token
-    const firstRefresh = await sessionService.refresh(loginResult.refreshToken, testDevice);
-    expect(firstRefresh.refreshToken).toBeTruthy();
+  it('allows access via Authorization: Bearer <password> header', async () => {
+    const res = await request(app)
+      .get('/api/v1/models')
+      .set('Authorization', `Bearer ${testPassword}`);
 
-    // Replay attack: attempting to use the old refresh token again
-    await expect(sessionService.refresh(loginResult.refreshToken, testDevice)).rejects.toThrow(
-      'Session invalidated due to token reuse'
-    );
-
-    // Verify that the subsequent valid token from that family was ALSO revoked
-    await expect(sessionService.refresh(firstRefresh.refreshToken, testDevice)).rejects.toThrow(
-      'Session invalidated due to token reuse'
-    );
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
   });
 
-  it('logs out and revokes active session', async () => {
-    const loginResult = await sessionService.login(testPassword, testDevice);
-    await sessionService.logout(loginResult.refreshToken);
+  it('blocks access to protected endpoints with 401 when password is wrong or missing', async () => {
+    const resNoAuth = await request(app).get('/api/v1/models');
+    expect(resNoAuth.status).toBe(401);
 
-    // Refresh after logout fails
-    await expect(sessionService.refresh(loginResult.refreshToken, testDevice)).rejects.toThrow();
+    const resBadAuth = await request(app)
+      .get('/api/v1/models')
+      .set('X-Astra-Password', 'invalid-pass');
+    expect(resBadAuth.status).toBe(401);
   });
 
-  it('lists active sessions and allows revocation by ID', async () => {
-    const s1 = await sessionService.login(testPassword, { ...testDevice, deviceId: 'dev-1' });
-    const s2 = await sessionService.login(testPassword, { ...testDevice, deviceId: 'dev-2' });
+  it('logs out cleanly and reports success', async () => {
+    const res = await request(app)
+      .post('/api/v1/auth/logout')
+      .send({ refreshToken: testPassword });
 
-    let active = await sessionService.listActiveSessions();
-    expect(active.length).toBe(2);
-
-    const targetSession = active.find((s) => s.deviceId === 'dev-1');
-    expect(targetSession).toBeDefined();
-
-    await sessionService.revokeSessionById(targetSession!.id);
-
-    active = await sessionService.listActiveSessions();
-    expect(active.length).toBe(1);
-    expect(active[0].deviceId).toBe('dev-2');
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
   });
 });

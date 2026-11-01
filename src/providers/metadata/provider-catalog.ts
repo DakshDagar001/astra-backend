@@ -45,7 +45,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'gemini',
     displayName: 'Google Gemini',
     description: 'High-speed multimodal intelligence with large context windows',
-    baseUrl: 'https://generativelanguage.googleapis.com',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
     defaultModel: 'gemini:gemini-2.5-flash',
     models: [
       {
@@ -138,7 +138,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'huggingface',
     displayName: 'Hugging Face',
     description: 'Open-access Serverless Inference API and router endpoints',
-    baseUrl: 'https://api-inference.huggingface.co/models',
+    baseUrl: 'https://router.huggingface.co/v1',
     defaultModel: 'huggingface:qwen2.5-72b-instruct',
     models: [
       {

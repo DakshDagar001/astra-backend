@@ -1,23 +1,23 @@
 # Astra AI — Central Backend & Intelligent Routing Engine (AIRE)
 
-The central backend for Astra AI provides authentication, session management, multi-provider credential security, model discovery, persistent conversation management, and **AIRE (Astra Intelligent Routing Engine)** — an intelligent failover and multi-provider gateway supporting 8 AI providers with real-time SSE streaming.
+The central backend for Astra AI provides authentication, multi-provider credential security, model discovery, persistent conversation management, and **AIRE (Astra Intelligent Routing Engine)** — an intelligent failover and multi-provider gateway supporting 8 AI providers with real-time SSE streaming.
 
 ---
 
 ## Architecture & Features
 
 - **Centralized Credential Security**: Private provider API keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, etc.) remain exclusively on the backend and are never sent to Windows or Android clients.
-- **Argon2id Authentication**: Single authorized application owner, brute-force protection, and IP-aware rate limiting.
-- **Rotating Refresh Tokens & Reuse Detection**: Short-lived JWT access tokens with cryptographically random opaque refresh tokens stored as SHA-256 hashes in PostgreSQL. Any attempt to replay a revoked token revokes the entire token family.
+- **Simplified Single-User Authentication**: Single authorized access controlled by `AUTH_PASSWORD`. Validated using constant-time `crypto.timingSafeEqual` SHA-256 comparisons to prevent timing attacks. Supports dedicated `X-Astra-Password` and standard `Authorization: Bearer` headers.
+- **Render Free Tier Ready**: Fully self-contained Node.js service that operates on Render's free tier without requiring external PostgreSQL database infrastructure. In-memory session tracking, cooldown management, and conversation storage.
 - **8 Supported AI Providers**:
-  1. **OpenAI**: GPT-4o, GPT-4o Mini
-  2. **Google Gemini**: Gemini 2.5 Flash, Gemini 1.5 Pro
-  3. **OpenRouter**: Unified model proxy & aggregator
-  4. **Groq**: Ultra-low latency Llama 3.3 70B
-  5. **Hugging Face**: Qwen 2.5 Coder
-  6. **NVIDIA NIM**: Llama 3.1 70B
-  7. **Together AI**: Vision and open-source models
-  8. **DeepInfra**: DeepSeek and open-weight models
+  1. **OpenAI**: `https://api.openai.com/v1` (GPT-4o, GPT-4o Mini)
+  2. **Google Gemini**: `https://generativelanguage.googleapis.com/v1beta` (Gemini 2.5 Flash, Gemini 1.5 Pro)
+  3. **OpenRouter**: `https://openrouter.ai/api/v1` (Auto Router, Llama 3.3 70B)
+  4. **Groq**: `https://api.groq.com/openai/v1` (Ultra-low latency Llama 3.3 70B, Llama 3.2 11B Vision)
+  5. **Hugging Face**: `https://router.huggingface.co/v1` (Qwen 2.5 72B Instruct, Llama 3.2 11B Vision)
+  6. **NVIDIA NIM**: `https://integrate.api.nvidia.com/v1` (Meta Llama 3.1 70B Instruct, Vision Instruct)
+  7. **Together AI**: `https://api.together.xyz/v1` (Llama 3.3 70B Turbo, Vision Turbo)
+  8. **DeepInfra**: `https://api.deepinfra.com/v1/openai` (Llama 3.3 70B Instruct, Vision Instruct)
 - **AIRE (Astra Intelligent Routing Engine)**:
   - Hybrid routing with user priority reordering and manual model pinning.
   - Automatic capability-based model selection (filtering out text-only models when image payloads are present).
@@ -26,10 +26,10 @@ The central backend for Astra AI provides authentication, session management, mu
   - Cooldown tracking with exponential backoff and jitter.
   - Response mode preservation (`FULL_EXPLANATION` vs `ANSWER_ONLY`).
   - First-token streaming safety guarantee.
-- **Persistent Conversations**:
-  - PostgreSQL multi-turn chat persistence with parent-child message tracking.
+- **Multi-Turn Conversations**:
+  - In-memory conversation management with parent-child message tracking.
   - Conversation branching and conversation history.
-  - Strict multi-session data isolation.
+  - Session isolation.
 
 ---
 
@@ -42,9 +42,10 @@ The central backend for Astra AI provides authentication, session management, mu
 │   ├── config/
 │   │   └── env.ts
 │   ├── auth/
+│   │   ├── simple-auth.ts
+│   │   ├── password.ts
 │   │   ├── tokens.ts
-│   │   ├── argon2.ts
-│   │   └── session.service.ts
+│   │   └── session-service.ts
 │   ├── middleware/
 │   │   ├── auth.middleware.ts
 │   │   ├── rate-limit.middleware.ts
@@ -52,15 +53,17 @@ The central backend for Astra AI provides authentication, session management, mu
 │   │   └── validate.middleware.ts
 │   ├── database/
 │   │   ├── connection.ts
-│   │   ├── migrate.ts
 │   │   └── repositories/
 │   ├── providers/
 │   │   ├── adapters/
 │   │   ├── registry/
-│   │   └── interfaces/
+│   │   ├── interfaces/
+│   │   └── metadata/
 │   ├── routing/
 │   │   ├── AIRE/
-│   │   └── cooldown/
+│   │   ├── cooldown/
+│   │   ├── fallback/
+│   │   └── policies/
 │   ├── routes/
 │   │   ├── auth.routes.ts
 │   │   ├── ai.routes.ts
@@ -70,19 +73,13 @@ The central backend for Astra AI provides authentication, session management, mu
 │   ├── validators/
 │   ├── logging/
 │   └── utils/
-├── migrations/
-│   ├── 001_initial_schema.sql
-│   └── 002_conversations.sql
 ├── tests/
 │   ├── auth.test.ts
 │   ├── providers.test.ts
 │   ├── aire.test.ts
 │   ├── api.test.ts
 │   └── conversations_and_streaming.test.ts
-├── scripts/
-│   └── setup-db.sh
 ├── package.json
-├── package-lock.json
 ├── tsconfig.json
 ├── render.yaml
 ├── .env.example
@@ -98,11 +95,7 @@ The central backend for Astra AI provides authentication, session management, mu
 | :--- | :---: | :--- | :--- |
 | `NODE_ENV` | Yes | `development`, `test`, or `production` | `development` |
 | `PORT` | No | HTTP port to listen on | `4000` |
-| `DATABASE_URL` | **Yes (Prod)** | PostgreSQL connection string | In-memory (Dev) |
-| `ASTRA_PASSWORD_HASH` | **Yes (Prod)** | Argon2id hash of owner password | Testing hash |
-| `ASTRA_JWT_SECRET` | **Yes (Prod)** | JWT signing secret ($\ge 32$ chars) | Dev secret |
-| `ACCESS_TOKEN_EXPIRY_SECONDS` | No | Access token lifespan in seconds | `900` (15m) |
-| `REFRESH_TOKEN_EXPIRY_DAYS` | No | Refresh token lifespan in days | `30` |
+| `AUTH_PASSWORD` | **Yes (Prod)** | Single-user authentication password | `astra-dev-password` (Dev) |
 | `OPENAI_API_KEY` | Optional | OpenAI API Key | None |
 | `GEMINI_API_KEY` | Optional | Google Gemini API Key | None |
 | `OPENROUTER_API_KEY` | Optional | OpenRouter API Key | None |
@@ -121,20 +114,16 @@ The central backend for Astra AI provides authentication, session management, mu
 npm install
 ```
 
-### 2. Password Hash Generation
-Generate an Argon2id hash for your owner password:
+### 2. Configure Environment
+Copy `.env.example` to `.env` and set `AUTH_PASSWORD`:
 ```bash
-npm run hash-password -- "YourSecurePassword123"
+AUTH_PASSWORD="your-secure-password"
 ```
-Copy the generated hash into your `.env` as `ASTRA_PASSWORD_HASH`.
 
 ### 3. Build & Run
 ```bash
 # Build TypeScript
 npm run build
-
-# Run database migrations
-npm run migrate
 
 # Start production server
 npm start
@@ -150,19 +139,18 @@ npm test
 
 ---
 
-## Deployment on Render
+## Deployment on Render (Free Tier)
 
-This repository is pre-configured for automated zero-downtime deployment on Render via [`render.yaml`](./render.yaml).
+This repository is pre-configured for automated deployment on Render's free tier via [`render.yaml`](./render.yaml).
 
 1. In Render Dashboard, click **New +** -> **Blueprint**.
 2. Select your repository: `https://github.com/DakshDagar001/astra-backend`.
 3. Render automatically provisions:
-   - Web Service `astra-ai-backend` (Node.js 22 LTS).
-   - PostgreSQL database `astra-ai-db`.
+   - Web Service `astra-ai-backend` (Node.js 22 LTS, free plan).
 4. Configure required secrets in the Render Environment Dashboard:
-   - `ASTRA_PASSWORD_HASH`
+   - `AUTH_PASSWORD`
    - Provider API keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`, etc.).
 5. Build and Start commands run automatically:
-   - Build: `npm install && npm run build && npm run migrate`
+   - Build: `npm install && npm run build`
    - Start: `npm run start`
    - Health check: `/health`

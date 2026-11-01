@@ -1,9 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { sessionService } from '../auth/session-service.js';
+import { verifyAuthPassword } from '../auth/simple-auth.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { loginRateLimiter } from '../middleware/rate-limit.middleware.js';
-import { validateBody } from '../middleware/validate.middleware.js';
-import { loginSchema, refreshSchema, logoutSchema } from '../validators/auth.validator.js';
+import { AuthenticationError } from '../utils/errors.js';
 
 const router = Router();
 
@@ -11,25 +10,23 @@ const router = Router();
 router.post(
   '/login',
   loginRateLimiter,
-  validateBody(loginSchema),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { password, deviceId, deviceName, clientType, clientVersion } = req.body;
-      const ip = req.ip || req.socket.remoteAddress;
-      const userAgent = req.headers['user-agent'];
+      const candidate = req.body?.password || (req.headers['x-astra-password'] as string);
 
-      const result = await sessionService.login(password, {
-        deviceId,
-        deviceName,
-        clientType,
-        clientVersion,
-        ipAddress: ip,
-        userAgent,
-      });
+      if (!candidate || !verifyAuthPassword(candidate)) {
+        throw new AuthenticationError('Invalid authentication credentials');
+      }
 
       res.status(200).json({
         success: true,
-        data: result,
+        data: {
+          authenticated: true,
+          token: candidate,
+          accessToken: candidate,
+          refreshToken: candidate,
+          sessionId: 'default-session',
+        },
       });
     } catch (err) {
       next(err);
@@ -40,25 +37,23 @@ router.post(
 // POST /api/v1/auth/refresh
 router.post(
   '/refresh',
-  validateBody(refreshSchema),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { refreshToken, deviceId, deviceName, clientType, clientVersion } = req.body;
-      const ip = req.ip || req.socket.remoteAddress;
-      const userAgent = req.headers['user-agent'];
+      const candidate = req.body?.refreshToken || (req.headers['x-astra-password'] as string);
 
-      const result = await sessionService.refresh(refreshToken, {
-        deviceId,
-        deviceName,
-        clientType,
-        clientVersion,
-        ipAddress: ip,
-        userAgent,
-      });
+      if (!candidate || !verifyAuthPassword(candidate)) {
+        throw new AuthenticationError('Invalid refresh credentials');
+      }
 
       res.status(200).json({
         success: true,
-        data: result,
+        data: {
+          authenticated: true,
+          token: candidate,
+          accessToken: candidate,
+          refreshToken: candidate,
+          sessionId: 'default-session',
+        },
       });
     } catch (err) {
       next(err);
@@ -67,79 +62,25 @@ router.post(
 );
 
 // POST /api/v1/auth/logout
-router.post(
-  '/logout',
-  validateBody(logoutSchema),
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const { refreshToken } = req.body;
-      await sessionService.logout(refreshToken);
-      res.status(200).json({
-        success: true,
-        message: 'Logged out successfully',
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.post('/logout', (_req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'Logged out successfully',
+  });
+});
 
 // GET /api/v1/auth/me
-router.get(
-  '/me',
-  requireAuth,
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      res.status(200).json({
-        success: true,
-        data: {
-          user: req.user?.sub,
-          sessionId: req.user?.sessionId,
-          deviceId: req.user?.deviceId,
-          clientType: req.user?.clientType,
-        },
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// GET /api/v1/auth/sessions
-router.get(
-  '/sessions',
-  requireAuth,
-  async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const sessions = await sessionService.listActiveSessions();
-      res.status(200).json({
-        success: true,
-        data: {
-          sessions,
-        },
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// DELETE /api/v1/auth/sessions/:id
-router.delete(
-  '/sessions/:id',
-  requireAuth,
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const { id } = req.params;
-      await sessionService.revokeSessionById(id);
-      res.status(200).json({
-        success: true,
-        message: 'Session revoked',
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.get('/me', requireAuth, (req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    data: {
+      authenticated: true,
+      user: req.user?.sub || 'owner',
+      role: req.user?.role || 'owner',
+      deviceId: req.user?.deviceId || 'device-test-api',
+      sessionId: req.user?.sessionId || 'default-session',
+    },
+  });
+});
 
 export const authRoutes = router;
